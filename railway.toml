@@ -1,0 +1,8 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+# Ogni giorno alle 15:30 ora italiana (13:30 UTC, ora legale estate)
+cronSchedule = "30 13 * * 1-5"
+startCommand = "python bot.py"
+restartPolicyType = "never"
