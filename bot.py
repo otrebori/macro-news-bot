@@ -4,7 +4,7 @@ import requests
 from datetime import datetime
 
 # ── Config ──────────────────────────────────────────────────────────────────
-TELEGRAM_TOKEN  = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 
@@ -12,7 +12,6 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 def get_macro_news() -> str:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     today = datetime.now().strftime("%d %B %Y")
-
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=2048,
@@ -24,14 +23,15 @@ def get_macro_news() -> str:
             "Concentrati su: apertura Wall Street, futures, Fed, tassi, inflazione USA, "
             "dati macro americani del giorno, dollaro, Treasury, S&P500, Nasdaq, Dow Jones, "
             "petrolio, oro, e impatto sui mercati europei. "
-            "Rispondi SOLO in italiano, usando la formattazione Telegram: "
-            "grassetto con *testo*, elenchi con •. "
+            "Rispondi SOLO in italiano, senza alcuna formattazione Markdown. "
+            "Non usare asterischi, underscore o altri simboli di formattazione. "
+            "Usa solo emoji e testo semplice. "
             "Struttura così:\n"
-            "1. 📰 TITOLO DEL GIORNO\n"
-            "2. 🇺🇸 TOP 5 NOTIZIE USA\n"
-            "3. 📊 APERTURA WALL STREET (indici, variazioni)\n"
-            "4. 💱 MERCATI (dollaro, Treasury 10Y, oro, petrolio)\n"
-            "5. 🔭 DA SEGUIRE OGGI\n"
+            "1. TITOLO DEL GIORNO\n"
+            "2. TOP 5 NOTIZIE USA\n"
+            "3. APERTURA WALL STREET (indici, variazioni)\n"
+            "4. MERCATI (dollaro, Treasury 10Y, oro, petrolio)\n"
+            "5. DA SEGUIRE OGGI\n"
             "Sii conciso ma preciso. Max 500 parole."
         ),
         messages=[{
@@ -40,10 +40,8 @@ def get_macro_news() -> str:
                        "Wall Street sta aprendo: dimmi tutto."
         }],
     )
-
     text_parts = [block.text for block in response.content if block.type == "text"]
     return "\n".join(text_parts) if text_parts else "⚠️ Nessun contenuto ricevuto."
-
 
 # ── Telegram: invia messaggio ────────────────────────────────────────────────
 def send_telegram(text: str) -> None:
@@ -53,17 +51,16 @@ def send_telegram(text: str) -> None:
         resp = requests.post(url, json={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": chunk,
-            "parse_mode": "Markdown",
+            # Nessun parse_mode: testo semplice, non fallisce mai per formattazione
         }, timeout=10)
         resp.raise_for_status()
-
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print(f"🚀 Avvio briefing — {datetime.now().isoformat()}")
     try:
         news = get_macro_news()
-        header = f"🔔 *Briefing Macro-Finanziario* — {datetime.now().strftime('%d/%m/%Y ore 15:30')}\n\n"
+        header = f"🔔 Briefing Macro-Finanziario — {datetime.now().strftime('%d/%m/%Y ore 15:30')}\n\n"
         send_telegram(header + news)
         print("✅ Briefing inviato!")
     except Exception as e:
