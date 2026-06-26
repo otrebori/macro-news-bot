@@ -1,12 +1,55 @@
+
 import os
-import anthropic
 import requests
-from datetime import datetime
+import anthropic
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 # ── Config ──────────────────────────────────────────────────────────────────
-TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHAT_ID  = os.environ["TELEGRAM_CHAT_ID"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+
+# Orario previsto del briefing (ora italiana = UTC+2)
+BRIEFING_ORA      = 15
+BRIEFING_MINUTI   = 30
+FINESTRA_RECUPERO = 120  # minuti: se siamo entro 2 ore, invia comunque
+
+# File che registra l'ultima data in cui il briefing è stato inviato con successo
+LAST_SENT_FILE = Path("/tmp/last_briefing_sent.txt")
+
+# ── Controllo anti-duplicato e finestra di recupero ─────────────────────────
+def briefing_gia_inviato_oggi() -> bool:
+    """Restituisce True se il briefing di oggi è già stato inviato con successo."""
+    if not LAST_SENT_FILE.exists():
+        return False
+    ultima_data = LAST_SENT_FILE.read_text().strip()
+    oggi = datetime.now().strftime("%Y-%m-%d")
+    return ultima_data == oggi
+
+def segna_briefing_inviato() -> None:
+    """Salva la data di oggi come 'briefing inviato'."""
+    LAST_SENT_FILE.write_text(datetime.now().strftime("%Y-%m-%d"))
+
+def siamo_nella_finestra() -> bool:
+    """
+    Controlla se siamo nell'orario giusto per inviare il briefing.
+    Invia se siamo tra le 15:30 e le 17:30 (ora italiana, UTC+2),
+    così recuperiamo anche se Render ha saltato la finestra esatta.
+    """
+    ora_italiana = datetime.now(timezone(timedelta(hours=2)))
+    ora_prevista = ora_italiana.replace(
+        hour=BRIEFING_ORA,
+        minute=BRIEFING_MINUTI,
+        second=0,
+        microsecond=0
+    )
+    ora_limite = ora_prevista + timedelta(minutes=FINESTRA_RECUPERO)
+
+    print(f"🕐 Ora italiana attuale: {ora_italiana.strftime('%H:%M')}")
+    print(f"🎯 Finestra di invio: {ora_prevista.strftime('%H:%M')} → {ora_limite.strftime('%H:%M')}")
+
+    return ora_prevista <= ora_italiana <= ora_limite
 
 # ── Claude: cerca e riassumi notizie ────────────────────────────────────────
 def get_macro_news() -> str:
@@ -51,22 +94,43 @@ def send_telegram(text: str) -> None:
         resp = requests.post(url, json={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": chunk,
-            # Nessun parse_mode: testo semplice, non fallisce mai per formattazione
         }, timeout=10)
         resp.raise_for_status()
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print(f"🚀 Avvio briefing — {datetime.now().isoformat()}")
+    ora_avvio = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    print(f"🚀 Bot avviato — {ora_avvio}")
+
+    # 1. Il briefing di oggi è già stato inviato?
+    if briefing_gia_inviato_oggi():
+        print("✅ Briefing già inviato oggi. Nessuna azione necessaria.")
+        raise SystemExit(0)
+
+    # 2. Siamo nella finestra oraria giusta (15:30 → 17:30 ora italiana)?
+    if not siamo_nella_finestra():
+        print("⏰ Fuori dalla finestra di invio (15:30–17:30 ora italiana). Nessuna azione.")
+        raise SystemExit(0)
+
+    # 3. Tutto ok: genera e invia il briefing
+    print("📡 Finestra valida — genero il briefing...")
     try:
         news = get_macro_news()
-        header = f"🔔 Briefing Macro-Finanziario — {datetime.now().strftime('%d/%m/%Y ore 15:30')}\n\n"
+        ora_invio = datetime.now().strftime("%d/%m/%Y ore %H:%M")
+        header = f"🔔 Briefing Macro-Finanziario — {ora_invio}\n\n"
         send_telegram(header + news)
-        print("✅ Briefing inviato!")
+        segna_briefing_inviato()
+        print("✅ Briefing inviato con successo!")
+
     except Exception as e:
-        print(f"❌ Errore: {e}")
+        messaggio_errore = (
+            f"❌ Errore nel briefing del {ora_avvio}\n"
+            f"Dettaglio: {e}\n"
+            f"Controlla i log di Render per maggiori informazioni."
+        )
+        print(messaggio_errore)
         try:
-            send_telegram(f"❌ Errore bot: {e}")
-        except Exception:
-            pass
+            send_telegram(messaggio_errore)
+        except Exception as telegram_err:
+            print(f"❌ Impossibile inviare nemmeno il messaggio di errore su Telegram: {telegram_err}")
         raise
